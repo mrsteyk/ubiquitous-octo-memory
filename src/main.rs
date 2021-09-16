@@ -21,6 +21,11 @@ struct Stage {
     blacklist: Option<blacklist::Blacklist>,
 }
 
+#[cfg(target_arch = "wasm32")]
+extern "C" {
+    pub fn console_log(msg: *const ::std::os::raw::c_char);
+}
+
 impl Stage {
     fn new(ctx: &mut mq::Context) -> Self {
         Self {
@@ -46,6 +51,7 @@ impl Stage {
                 egui::menu::menu(ui, "File", |ui| {
                     if ui.button("Open").clicked() {
                         // Open
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(map_data) = platform::file_picker_map() {
                             let (stem, vec) = map_data;
 
@@ -77,6 +83,13 @@ impl Stage {
                                     println!("{:#?}", v);
                                 }
                             }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            platform::wasm_file_picker(maps as *mut std::vec::Vec<Rc<RefCell<map_window::MapWindowStage>>>, blacklist_mut as *mut Option<blacklist::Blacklist>, ctx as *mut mq::Context);
+                            unsafe {
+                                platform::console_log(std::ffi::CString::new(format!("{}", maps as *mut _ as u32)).unwrap().as_ptr());
+                            };
                         }
                     }
                     if ui.button("Load blacklist JSON").clicked() {
