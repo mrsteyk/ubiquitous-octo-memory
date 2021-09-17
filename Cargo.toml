@@ -28,4 +28,5 @@ sha2 = "0.9"
 hex = "0.4"
 # we only ever need store from this crate according to dev wiki
 zip = { version = "0.5", default-features = false }
-lzma-rs = "0.2"
+#lzma-rs = "0.2"
+gmod-lzma = { git = "https://github.com/mrsteyk/gmod-lzma-rs.git" }

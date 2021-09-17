@@ -137,7 +137,12 @@ impl ParsedMap {
         for i in 0..64usize {
             let (offset, size, version, four) = unsafe {
                 let lump_start = buf.as_ptr().add(8 + i * 16).cast::<u32>();
-                (*lump_start, *lump_start.add(1), *lump_start.add(2), *lump_start.add(3))
+                (
+                    *lump_start,
+                    *lump_start.add(1),
+                    *lump_start.add(2),
+                    *lump_start.add(3),
+                )
             };
             let base = BasicLump {
                 offset,
@@ -150,24 +155,30 @@ impl ParsedMap {
                     base,
                     string: unsafe {
                         // LZMA
-                        if &buf[offset as usize..(offset+4) as usize] == &[0x4C, 0x5A, 0x4D, 0x41] {
+                        if &buf[offset as usize..(offset + 4) as usize] == &[0x4C, 0x5A, 0x4D, 0x41]
+                        {
                             let buf_ptr = buf.as_ptr().add(offset as usize).cast::<u32>();
                             let decompressed_size = *buf_ptr.add(1);
                             let compressed_size = *buf_ptr.add(2);
 
                             // eprintln!("{} | {} | {}", compressed_size, size, four);
 
-                            // let mut input = std::io::Cursor::new(&buf[(offset+12) as usize..(offset+compressed_size) as usize]);
-                            let mut input = std::io::Cursor::new(&buf[(offset+12) as usize..(offset+size) as usize]); // offset as usize + compressed_size as usize
-                            let mut output = Vec::<u8>::with_capacity(decompressed_size as usize);
-                            lzma_rs::lzma_decompress_with_options(&mut input, &mut output, &lzma_rs::decompress::Options {
-                                unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(Some(decompressed_size as u64)),
-                                ..Default::default()
-                            }).unwrap();
+                            let inner = &buf[(offset + 12) as usize
+                                ..(offset + 12 + compressed_size + 5) as usize];
+                            let output =
+                                gmod_lzma::decompress_valve(inner, decompressed_size).unwrap();
+
                             let ret = std::str::from_utf8_unchecked(&output).to_string();
 
                             // eprintln!("{}", &ret);
-                            eprintln!("{} | {} | {} | {} ||| {}", compressed_size, decompressed_size, size, four, ret.len());
+                            eprintln!(
+                                "{} | {} | {} | {} ||| {}",
+                                compressed_size,
+                                decompressed_size,
+                                size,
+                                four,
+                                ret.len()
+                            );
 
                             #[cfg(debug_assertions)]
                             {
@@ -210,7 +221,7 @@ impl ParsedMap {
 
                                 if header[8] != 0 || header[9] != 0 {
                                     //return Err(Box::new(BSPError::InvalidPakFile(header_pos + 8)));
-                                    if header[8] == 0xE &&  header[9] == 0 {
+                                    if header[8] == 0xE && header[9] == 0 {
                                         // LZMA
                                         let compressed_size =
                                             unsafe { *((&header[18..22]).as_ptr().cast::<u32>()) };
@@ -220,9 +231,11 @@ impl ParsedMap {
                                             unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
                                         let extra_size =
                                             unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
-                                        
+
                                         if extra_size != 0 {
-                                            return Err(Box::new(BSPError::InvalidPakFile(header_pos + 28)));
+                                            return Err(Box::new(BSPError::InvalidPakFile(
+                                                header_pos + 28,
+                                            )));
                                         }
 
                                         let name = (position as u32, name_size as u32);
@@ -233,16 +246,33 @@ impl ParsedMap {
                                         let real_data = {
                                             // Explanation:
                                             // LZMA in ZIP spec: u16(version), u16(props_size)
-                                            let mut r = std::io::Cursor::new(&file[position + 4..position + compressed_size as usize]);
-                                            let mut decomp = Vec::<u8>::with_capacity(data_size as usize);
-                                            if let Err(v) = lzma_rs::lzma_decompress_with_options(&mut r, &mut decomp, &lzma_rs::decompress::Options {
-                                                unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(Some(data_size as u64)),
-                                                ..Default::default()
-                                            }) {
-                                                eprintln!("{:#?}", v);
-                                                return Err(Box::new(BSPError::InvalidPakFile(position as u32)));
-                                            } else {
+
+                                            // let mut r = std::io::Cursor::new(
+                                            //     &file[position + 4
+                                            //         ..position + compressed_size as usize],
+                                            // );
+                                            // let mut decomp =
+                                            //     Vec::<u8>::with_capacity(data_size as usize);
+                                            // if let Err(v) = lzma_rs::lzma_decompress_with_options(&mut r, &mut decomp, &lzma_rs::decompress::Options {
+                                            //     unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(Some(data_size as u64)),
+                                            //     ..Default::default()
+                                            // }) {
+                                            //     eprintln!("{:#?}", v);
+                                            //     return Err(Box::new(BSPError::InvalidPakFile(position as u32)));
+                                            // } else {
+                                            //     Some(decomp)
+                                            // }
+
+                                            let data = &file
+                                                [position + 4..position + compressed_size as usize];
+                                            if let Ok(decomp) =
+                                                gmod_lzma::decompress_valve(data, data_size)
+                                            {
                                                 Some(decomp)
+                                            } else {
+                                                return Err(Box::new(BSPError::InvalidPakFile(
+                                                    position as u32,
+                                                )));
                                             }
                                         };
                                         position += compressed_size as usize;
@@ -251,12 +281,17 @@ impl ParsedMap {
                                             name,
                                             data: compressed_data,
                                             remove: false,
-        
+
                                             real_data,
-                                            compression_algo: PakAlgo::LZMA(compressed_size, data_size),
+                                            compression_algo: PakAlgo::LZMA(
+                                                compressed_size,
+                                                data_size,
+                                            ),
                                         })
                                     } else {
-                                        return Err(Box::new(BSPError::InvalidPakFile(header_pos + 8)));
+                                        return Err(Box::new(BSPError::InvalidPakFile(
+                                            header_pos + 8,
+                                        )));
                                     }
                                 } else {
                                     // STORE
@@ -267,7 +302,7 @@ impl ParsedMap {
                                         unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
                                     let extra_size =
                                         unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
-    
+
                                     // let name = unsafe {
                                     //     std::str::from_utf8_unchecked(
                                     //         &file[position..position + name_size as usize],
@@ -276,16 +311,16 @@ impl ParsedMap {
                                     let name = (position as u32, name_size as u32);
                                     position += name_size as usize;
                                     position += extra_size as usize;
-    
+
                                     // let data = &file[position..position + data_size as usize];
                                     let data = (position as u32, data_size);
                                     position += data_size as usize;
-    
+
                                     files.push(PakFile {
                                         name,
                                         data,
                                         remove: false,
-    
+
                                         real_data: None,
                                         compression_algo: PakAlgo::None,
                                     })

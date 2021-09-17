@@ -137,7 +137,29 @@ impl Stage {
 
                                     let entlump = lump_helper!(&parsed_map.lumps[0], BSPLump::Entities(v) => v);
                                     let entity_data_str = entities.iter().map(|f| f.string.as_str()).collect::<Vec<&str>>().join("\n").add("\n\0");
-                                    let entity_data = entity_data_str.as_bytes();
+                                    let (entity_data, ent_vec) = if entities.iter().find(|f| f.dirty).is_some() {
+                                        if entlump.base.four == 0 {
+                                            (entity_data_str.as_bytes(), None)
+                                        } else {
+                                            // we have compressed data :/
+                                            let bytes = entity_data_str.as_bytes();
+
+                                            let output = gmod_lzma::compress_valve(bytes, 6).unwrap();
+
+                                            let len = (output.len() - 5) as u32; // remove LZMA props size...
+                                            let output = [&[0x4Cu8, 0x5A, 0x4D, 0x41] as &[u8], &(bytes.len() as u32).to_le_bytes(), &len.to_le_bytes(), output.as_slice()].concat();
+
+                                            (&[] as &[u8], Some(output))
+                                        }
+                                    } else {
+                                        (&parsed_map.buf[entlump.base.offset as usize..(entlump.base.offset + entlump.base.size) as usize], None)
+                                    };
+
+                                    let entity_data = if let Some(v) = ent_vec.as_ref() {
+                                        v.as_slice()
+                                    } else {
+                                        entity_data
+                                    };
 
                                     // TODO: recreate array
                                     // TODO: remove material?
@@ -155,22 +177,97 @@ impl Stage {
                                         }
                                     }
                                     // TODO: REFACTOR INTO A FUNCTION!
-                                    let zip_data = {
+                                    let (mut zip_data, lzma_pass) = if pakfiles.iter().find(|f| f.remove).is_some() {
                                         let zipw = Vec::<u8>::new();
                                         let zipc = std::io::Cursor::new(zipw);
                                         let mut zip_writer = zip::ZipWriter::new(zipc);
                                         let options = zip::write::FileOptions::default()
                                             .compression_method(zip::CompressionMethod::Stored) // force store to be extra safe
                                             .unix_permissions(0o755);
+                                        let mut lzma_pass = false;
                                         for pakfile in &pakfiles {
                                             if !pakfile.remove {
                                                 zip_writer.start_file(pakfile.name(pakbuf), options).unwrap();
-                                                zip_writer.write_all(pakfile.data(pakbuf)).unwrap();
+                                                match pakfile.compression_algo {
+                                                    bsp::PakAlgo::None => {
+                                                        zip_writer.write_all(pakfile.data(pakbuf)).unwrap();
+                                                    },
+                                                    // We care for compressed size because I don't want to go over it if I just recompress...
+                                                    bsp::PakAlgo::LZMA(comp, _) => {
+                                                        let data = pakfile.data(&[]);
+
+                                                        lzma_pass = true;
+
+                                                        let comp_data = pakfile.data;
+                                                        zip_writer.write_all(&pakbuf[comp_data.0 as usize..(comp_data.0+comp_data.1) as usize]).unwrap();
+
+                                                        // for future?
+                                                        // let output = gmod_lzma::compress_valve(data, 9 | (1 << 31)).unwrap();
+
+                                                        // eprintln!("LZMA comp: {} V {}", comp, output.len());
+                                                        // #[cfg(debug_assertions)]
+                                                        // assert!(comp as usize >= output.len());
+
+                                                        // // Version + props size as per LZMA in ZIP spec
+                                                        // zip_writer.write_all(&[0x09, 0x26, 5, 0]).unwrap();
+                                                        // zip_writer.write_all(output.as_slice()).unwrap();
+                                                    }
+                                                }
                                             }
                                         }
-                                        zip_writer.finish().unwrap()
+                                        (zip_writer.finish().unwrap(), lzma_pass)
+                                    } else {
+                                        (std::io::Cursor::new(pakbuf.to_vec()), false)
                                     };
-                                    let pak_data = zip_data.get_ref().as_slice(); //paklump.data(&parsed_map.buf);
+                                    let pak_data_mut = zip_data.get_mut().as_mut_slice();
+                                    // OMG why
+                                    if lzma_pass {
+                                        let mut position = 0usize;
+                                        loop {
+                                            let header_pos = position;
+                                            let header = &pak_data_mut[position..position + 30];
+                                            position += 30;
+                                            match &header[0..4] {
+                                                &[0x50, 0x4B, 3, 4] => {
+                                                    let compressed_size =
+                                                        unsafe { *((&header[18..22]).as_ptr().cast::<u32>()) };
+                                                    // let data_size =
+                                                    //     unsafe { *((&header[22..26]).as_ptr().cast::<u32>()) };
+                                                    let name_size =
+                                                        unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
+                                                    let extra_size =
+                                                        unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
+                                                    let name = (position as u32, name_size as u32);
+                                                    position += name_size as usize;
+                                                    position += extra_size as usize;
+                                                    position += compressed_size as usize;
+                                                    for pakfile in &pakfiles {
+                                                        if !pakfile.remove {
+                                                            match pakfile.compression_algo {
+                                                                bsp::PakAlgo::LZMA(_, _) => {
+                                                                    if pakfile.name(pakbuf).as_bytes() == &pak_data_mut[name.0 as usize..(name.0 + name.1) as usize] {
+                                                                        // we got a hit for LZMA packed file, yay?
+                                                                        pak_data_mut[header_pos + 8] = 0xE;
+                                                                        pak_data_mut[header_pos + 22..header_pos + 26].copy_from_slice(&(pakfile.data(&[]).len() as u32).to_le_bytes());
+                                                                    }
+                                                                },
+                                                                _ => {
+                                                                    // do nothing...
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                &[0x50, 0x4B, 1, 2] => {
+                                                    break; // Central directory aka ending stuff
+                                                }
+                                                _ => {
+                                                    unreachable!();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    let pak_data = pak_data_mut.as_ref();
 
                                     let mut lumps_temp = [0u32; 64]; // offset
                                     {
@@ -271,7 +368,7 @@ impl Stage {
 
                                         platform::save_picker("BSP", &["bsp"], &buf);
                                     } else {
-                                        eprintln!("Failed: {} | {}", can_ent, can_pak);
+                                        eprintln!("Failed: {} ({} V {}) | {} ({} V {})", can_ent, (entity_data.len() as u32), entlump.base.size, can_pak, (pak_data.len() as u32), paklump.base.size);
                                     }
                                 }
                             }
