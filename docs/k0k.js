@@ -20,7 +20,7 @@ miniquad_add_plugin({
           // const buf = new Uint8Array(wasm_memory.buffer)
           const text = new TextEncoder('utf-8')
 
-          const stem = text.encode(file.name)
+          const stem = text.encode(file.name.substring(0, file.name.length - 4))
           const stem_len = stem.length
           const stem_buf = wasm_exports.malloc(stem_len)
           const data_buf = wasm_exports.malloc(bytes.length)
@@ -72,6 +72,11 @@ miniquad_add_plugin({
       const a = document.createElement('a')
       a.href = url
       a.download = `${name}.${ext}`
+
+      document.body.appendChild(a)
+      a.click()
+      URL.revokeObjectURL(url)
+      document.body.removeChild(a)
     }
   },
 

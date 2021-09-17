@@ -123,7 +123,7 @@ impl Stage {
                         let mut show = map.open; // hack to work around borrow problems
 
                         egui::menu::menu(ui, title, |ui| {
-                            ui.checkbox(&mut show, "Map View");
+                            ui.checkbox(&mut show, "Views");
                             if ui.button("Save").clicked() {
                                 // brih...
                                 if let Some(parsed_map) = parsed_map {
@@ -366,7 +366,7 @@ impl Stage {
                                             }
                                         }
 
-                                        platform::save_picker("BSP", &["bsp"], &buf);
+                                        platform::save_picker(&title, &["bsp"], &buf);
                                     } else {
                                         eprintln!("Failed: {} ({} V {}) | {} ({} V {})", can_ent, (entity_data.len() as u32), entlump.base.size, can_pak, (pak_data.len() as u32), paklump.base.size);
                                     }

@@ -58,7 +58,20 @@ pub fn save_picker(
     extensions: &[&str],
     data: &[u8],
 ) -> Result<(), std::io::Error> {
-    todo!()
+    let ext = extensions[0];
+
+    unsafe {
+        js_save_file(
+            filter_name.as_bytes().as_ptr() as u32,
+            filter_name.len() as u32,
+            data.as_ptr() as u32,
+            data.len() as u32,
+            ext.as_bytes().as_ptr() as u32,
+            ext.len() as u32,
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -70,7 +83,7 @@ pub fn file_picker(filter_name: &str, extensions: &[&str]) -> Option<(String, Ve
 extern "C" {
     pub fn js_file_picker(map_vec: u32, blacklist: u32, ctx: u32);
 
-    pub fn js_save_file(name: u32, name_sz: u32, data: u32, data_sz: u32);
+    pub fn js_save_file(name: u32, name_sz: u32, data: u32, data_sz: u32, ext: u32, ext_sz: u32);
 }
 
 #[cfg(target_arch = "wasm32")]
