@@ -117,19 +117,20 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
-// wasm-bindgen
-pub unsafe extern "C" fn free(ptr: *mut u8, size: usize) {
+// Sadly was given away cuz compiling step thinks this is the C free
+// pub unsafe extern "C" fn free(ptr: *mut u8, size: usize) {
+pub unsafe extern "C" fn free(ptr: *mut u8) {
     use std::alloc::{dealloc, Layout};
     use std::mem;
 
     // This happens for zero-length slices, and in that case `ptr` is
     // likely bogus so don't actually send this to the system allocator
-    if size == 0 {
-        return;
-    }
-    let align = mem::align_of::<usize>();
-    let layout = Layout::from_size_align_unchecked(size, align);
-    dealloc(ptr, layout);
+    // if size == 0 {
+    //     return;
+    // }
+    // let align = mem::align_of::<usize>();
+    // let layout = Layout::from_size_align_unchecked(size, align);
+    // dealloc(ptr, layout);
 }
 
 // fucking async JS
