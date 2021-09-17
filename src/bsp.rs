@@ -36,6 +36,8 @@ pub struct BasicLump {
     pub offset: u32,
     pub size: u32,
     pub version: u32,
+
+    pub four: u32, // fucking v21
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -46,16 +48,29 @@ pub struct EntityLump {
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub enum PakAlgo {
+    None,
+    LZMA(u32, u32), // comp, decomp
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct PakFile {
     pub name: (u32, u32),
     pub data: (u32, u32),
+
+    pub real_data: Option<Vec<u8>>,
+    pub compression_algo: PakAlgo,
 
     pub remove: bool,
 }
 
 impl PakFile {
-    pub fn data<'a>(&self, pak: &'a [u8]) -> &'a [u8] {
-        &pak[self.data.0 as usize..(self.data.0 + self.data.1) as usize]
+    pub fn data<'a>(&'a self, pak: &'a [u8]) -> &'a [u8] {
+        if let Some(data) = &self.real_data {
+            data.as_slice()
+        } else {
+            &pak[self.data.0 as usize..(self.data.0 + self.data.1) as usize]
+        }
     }
 
     pub fn name<'a>(&self, pak: &'a [u8]) -> &'a str {
@@ -109,7 +124,7 @@ impl ParsedMap {
                 return Err(Box::new(BSPError::InvalidHeader(*buf_u32)));
             }
             let ver = *buf_u32.add(1);
-            if ver != 19 && ver != 20 {
+            if ver != 19 && ver != 20 && ver != 21 {
                 return Err(Box::new(BSPError::InvalidVersion(ver)));
             }
 
@@ -120,28 +135,58 @@ impl ParsedMap {
         const INIT: BSPLump = BSPLump::None;
         let mut lumps = [INIT; 64];
         for i in 0..64usize {
-            let (offset, size, version) = unsafe {
+            let (offset, size, version, four) = unsafe {
                 let lump_start = buf.as_ptr().add(8 + i * 16).cast::<u32>();
-                (*lump_start, *lump_start.add(1), *lump_start.add(2))
+                (*lump_start, *lump_start.add(1), *lump_start.add(2), *lump_start.add(3))
             };
             let base = BasicLump {
                 offset,
                 size,
                 version,
+                four,
             };
             lumps[i] = match i {
                 0 => BSPLump::Entities(EntityLump {
                     base,
                     string: unsafe {
-                        let delta = if buf[(offset + size - 1) as usize] == 0 {
-                            1
+                        // LZMA
+                        if &buf[offset as usize..(offset+4) as usize] == &[0x4C, 0x5A, 0x4D, 0x41] {
+                            let buf_ptr = buf.as_ptr().add(offset as usize).cast::<u32>();
+                            let decompressed_size = *buf_ptr.add(1);
+                            let compressed_size = *buf_ptr.add(2);
+
+                            // eprintln!("{} | {} | {}", compressed_size, size, four);
+
+                            // let mut input = std::io::Cursor::new(&buf[(offset+12) as usize..(offset+compressed_size) as usize]);
+                            let mut input = std::io::Cursor::new(&buf[(offset+12) as usize..(offset+size) as usize]); // offset as usize + compressed_size as usize
+                            let mut output = Vec::<u8>::with_capacity(decompressed_size as usize);
+                            lzma_rs::lzma_decompress_with_options(&mut input, &mut output, &lzma_rs::decompress::Options {
+                                unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(Some(decompressed_size as u64)),
+                                ..Default::default()
+                            }).unwrap();
+                            let ret = std::str::from_utf8_unchecked(&output).to_string();
+
+                            // eprintln!("{}", &ret);
+                            eprintln!("{} | {} | {} | {} ||| {}", compressed_size, decompressed_size, size, four, ret.len());
+
+                            #[cfg(debug_assertions)]
+                            {
+                                assert_eq!(decompressed_size, four);
+                                assert_eq!(decompressed_size, ret.len() as u32);
+                            }
+
+                            ret
                         } else {
-                            0
-                        };
-                        std::str::from_utf8_unchecked(
-                            &buf[offset as usize..(offset + size - delta) as usize],
-                        )
-                        .to_string()
+                            let delta = if buf[(offset + size - 1) as usize] == 0 {
+                                1
+                            } else {
+                                0
+                            };
+                            std::str::from_utf8_unchecked(
+                                &buf[offset as usize..(offset + size - delta) as usize],
+                            )
+                            .to_string()
+                        }
                     },
                 }),
                 40 => {
@@ -163,36 +208,88 @@ impl ParsedMap {
                                 //     return Err(Box::new(BSPError::InvalidPakFile(header_pos + 4)));
                                 // }
 
-                                // Must be STORE
                                 if header[8] != 0 || header[9] != 0 {
-                                    return Err(Box::new(BSPError::InvalidPakFile(header_pos + 8)));
+                                    //return Err(Box::new(BSPError::InvalidPakFile(header_pos + 8)));
+                                    if header[8] == 0xE &&  header[9] == 0 {
+                                        // LZMA
+                                        let compressed_size =
+                                            unsafe { *((&header[18..22]).as_ptr().cast::<u32>()) };
+                                        let data_size =
+                                            unsafe { *((&header[22..26]).as_ptr().cast::<u32>()) };
+                                        let name_size =
+                                            unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
+                                        let extra_size =
+                                            unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
+                                        
+                                        if extra_size != 0 {
+                                            return Err(Box::new(BSPError::InvalidPakFile(header_pos + 28)));
+                                        }
+
+                                        let name = (position as u32, name_size as u32);
+                                        position += name_size as usize;
+                                        position += extra_size as usize;
+
+                                        let compressed_data = (position as u32, compressed_size);
+                                        let real_data = {
+                                            // Explanation:
+                                            // LZMA in ZIP spec: u16(version), u16(props_size)
+                                            let mut r = std::io::Cursor::new(&file[position + 4..position + compressed_size as usize]);
+                                            let mut decomp = Vec::<u8>::with_capacity(data_size as usize);
+                                            if let Err(v) = lzma_rs::lzma_decompress_with_options(&mut r, &mut decomp, &lzma_rs::decompress::Options {
+                                                unpacked_size: lzma_rs::decompress::UnpackedSize::UseProvided(Some(data_size as u64)),
+                                                ..Default::default()
+                                            }) {
+                                                eprintln!("{:#?}", v);
+                                                return Err(Box::new(BSPError::InvalidPakFile(position as u32)));
+                                            } else {
+                                                Some(decomp)
+                                            }
+                                        };
+                                        position += compressed_size as usize;
+
+                                        files.push(PakFile {
+                                            name,
+                                            data: compressed_data,
+                                            remove: false,
+        
+                                            real_data,
+                                            compression_algo: PakAlgo::LZMA(compressed_size, data_size),
+                                        })
+                                    } else {
+                                        return Err(Box::new(BSPError::InvalidPakFile(header_pos + 8)));
+                                    }
+                                } else {
+                                    // STORE
+
+                                    let data_size =
+                                        unsafe { *((&header[22..26]).as_ptr().cast::<u32>()) };
+                                    let name_size =
+                                        unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
+                                    let extra_size =
+                                        unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
+    
+                                    // let name = unsafe {
+                                    //     std::str::from_utf8_unchecked(
+                                    //         &file[position..position + name_size as usize],
+                                    //     )
+                                    // };
+                                    let name = (position as u32, name_size as u32);
+                                    position += name_size as usize;
+                                    position += extra_size as usize;
+    
+                                    // let data = &file[position..position + data_size as usize];
+                                    let data = (position as u32, data_size);
+                                    position += data_size as usize;
+    
+                                    files.push(PakFile {
+                                        name,
+                                        data,
+                                        remove: false,
+    
+                                        real_data: None,
+                                        compression_algo: PakAlgo::None,
+                                    })
                                 }
-
-                                let data_size =
-                                    unsafe { *((&header[22..26]).as_ptr().cast::<u32>()) };
-                                let name_size =
-                                    unsafe { *((&header[26..28]).as_ptr().cast::<u16>()) };
-                                let extra_size =
-                                    unsafe { *((&header[28..30]).as_ptr().cast::<u16>()) };
-
-                                // let name = unsafe {
-                                //     std::str::from_utf8_unchecked(
-                                //         &file[position..position + name_size as usize],
-                                //     )
-                                // };
-                                let name = (position as u32, name_size as u32);
-                                position += name_size as usize;
-                                position += extra_size as usize;
-
-                                // let data = &file[position..position + data_size as usize];
-                                let data = (position as u32, data_size);
-                                position += data_size as usize;
-
-                                files.push(PakFile {
-                                    name,
-                                    data,
-                                    remove: false,
-                                })
                             }
                             &[0x50, 0x4B, 1, 2] => {
                                 break; // Central directory aka ending stuff

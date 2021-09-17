@@ -248,7 +248,9 @@ impl Stage {
 
                                     // can we serialise(replace) stuff back?
                                     // sadly, this is a limitation and user can't even know if something's wrong
-                                    if ((entity_data.len() as u32) <= entlump.base.size) && ((pak_data.len() as u32) <= paklump.base.size) {
+                                    let can_ent = (entity_data.len() as u32) <= entlump.base.size;
+                                    let can_pak = (pak_data.len() as u32) <= paklump.base.size;
+                                    if can_ent && can_pak {
                                         let mut buf = parsed_map.buf.clone();
                                         let ent_sz = entity_data.len() as u32;
                                         let pak_sz = pak_data.len() as u32;
@@ -268,8 +270,9 @@ impl Stage {
                                         }
 
                                         platform::save_picker("BSP", &["bsp"], &buf);
+                                    } else {
+                                        eprintln!("Failed: {} | {}", can_ent, can_pak);
                                     }
-
                                 }
                             }
                             if ui.button("Close").clicked() {
