@@ -86,17 +86,22 @@ impl Stage {
                         }
                         #[cfg(target_arch = "wasm32")]
                         {
-                            platform::wasm_file_picker(maps as *mut std::vec::Vec<Rc<RefCell<map_window::MapWindowStage>>>, blacklist_mut as *mut Option<blacklist::Blacklist>, ctx as *mut mq::Context);
+                            platform::wasm_file_picker(maps as *mut std::vec::Vec<Rc<RefCell<map_window::MapWindowStage>>>, blacklist_mut as *mut Option<blacklist::Blacklist>, ctx as *mut mq::Context, platform::FileType::Map);
                             unsafe {
                                 platform::console_log(std::ffi::CString::new(format!("{}", maps as *mut _ as u32)).unwrap().as_ptr());
                             };
                         }
                     }
                     if ui.button("Load blacklist JSON").clicked() {
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some((_, data)) = platform::file_picker_json() {
                             if let Ok(blacklist) = blacklist::Blacklist::new(&data) {
                                 *blacklist_mut = Some(blacklist);
                             }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            platform::wasm_file_picker(maps as *mut std::vec::Vec<Rc<RefCell<map_window::MapWindowStage>>>, blacklist_mut as *mut Option<blacklist::Blacklist>, ctx as *mut mq::Context, platform::FileType::Blacklist);
                         }
                     }
                     #[cfg(not(target_arch = "wasm32"))]

@@ -1,11 +1,17 @@
 miniquad_add_plugin({
   register_plugin: function (importObject) {
-    importObject.env.js_file_picker = function (a, b, c) {
+    importObject.env.js_file_picker = function (a, b, c, d) {
       //wasm_exports.wasm_cb
-      console.log(a, b, c)
+      console.log(a, b, c, d)
+
+      let accept = '.bsp'
+      if (d == 1) {
+        accept = '.json'
+      }
 
       var input = document.createElement('input')
       input.type = 'file'
+      input.accept = accept
 
       input.onchange = (e) => {
         var file = e.target.files[0]
@@ -20,15 +26,15 @@ miniquad_add_plugin({
           // const buf = new Uint8Array(wasm_memory.buffer)
           const text = new TextEncoder('utf-8')
 
-          const stem = text.encode(file.name.substring(0, file.name.length - 4))
+          const stem = text.encode(
+            file.name.substring(0, file.name.length - accept.length)
+          )
           const stem_len = stem.length
           const stem_buf = wasm_exports.malloc(stem_len)
           const data_buf = wasm_exports.malloc(bytes.length)
 
           console.log({ stem_buf, data_buf })
 
-          // buf.subarray(stem_buf, stem_buf + stem_len).set(stem)
-          // buf.subarray(data_buf, data_buf + buf.length).set(buf)
           getArray(stem_buf, Uint8Array, stem_len).set(stem)
           getArray(data_buf, Uint8Array, bytes.length).set(bytes)
 
@@ -36,14 +42,12 @@ miniquad_add_plugin({
             a,
             b,
             c,
+            d,
             stem_buf,
             stem_len,
             data_buf,
             bytes.length
           )
-
-          // wasm_exports.free(stem, stem_len)
-          // wasm_exports.free(data_buf, bytes.length)
         }
       }
 

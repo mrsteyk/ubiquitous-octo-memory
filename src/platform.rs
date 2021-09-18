@@ -80,8 +80,15 @@ pub fn file_picker(filter_name: &str, extensions: &[&str]) -> Option<(String, Ve
 }
 
 #[cfg(target_arch = "wasm32")]
+#[repr(u32)]
+pub enum FileType {
+    Map = 0u32,
+    Blacklist = 1u32,
+}
+
+#[cfg(target_arch = "wasm32")]
 extern "C" {
-    pub fn js_file_picker(map_vec: u32, blacklist: u32, ctx: u32);
+    pub fn js_file_picker(map_vec: u32, blacklist: u32, ctx: u32, file_type: FileType);
 
     pub fn js_save_file(name: u32, name_sz: u32, data: u32, data_sz: u32, ext: u32, ext_sz: u32);
 }
@@ -89,8 +96,9 @@ extern "C" {
 #[cfg(target_arch = "wasm32")]
 pub fn wasm_file_picker(
     map_vec: *mut Vec<Rc<RefCell<crate::map_window::MapWindowStage>>>,
-    blacklist: *const Option<crate::blacklist::Blacklist>,
+    blacklist: *mut Option<crate::blacklist::Blacklist>,
     ctx: *mut miniquad::Context,
+    file_type: FileType,
 ) {
     use std::ffi::CString;
 
@@ -101,7 +109,7 @@ pub fn wasm_file_picker(
                 .as_ptr(),
         );
     };
-    unsafe { js_file_picker(map_vec as u32, blacklist as u32, ctx as u32) };
+    unsafe { js_file_picker(map_vec as u32, blacklist as u32, ctx as u32, file_type) };
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -128,6 +136,7 @@ pub extern "C" fn malloc(size: usize) -> *mut u8 {
     unreachable!()
 }
 
+/*
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 // Sadly was given away cuz compiling step thinks this is the C free
@@ -145,6 +154,7 @@ pub unsafe extern "C" fn free(ptr: *mut u8) {
     // let layout = Layout::from_size_align_unchecked(size, align);
     // dealloc(ptr, layout);
 }
+*/
 
 // fucking async JS
 #[cfg(target_arch = "wasm32")]
@@ -155,6 +165,7 @@ pub extern "C" fn wasm_cb(
     map_vec: u32,
     blacklist: u32,
     ctx: u32,
+    file_type: FileType,
     stem_ptr: u32,
     stem_len: u32,
     vec_ptr: u32,
@@ -168,7 +179,7 @@ pub extern "C" fn wasm_cb(
             .as_mut()
             .unwrap()
     };
-    let blacklist = unsafe { &*(blacklist as *const Option<crate::blacklist::Blacklist>) };
+    let blacklist = unsafe { &mut *(blacklist as *mut Option<crate::blacklist::Blacklist>) };
     let ctx = unsafe { &mut *(ctx as *mut miniquad::Context) };
 
     let stem_slice =
@@ -178,20 +189,40 @@ pub extern "C" fn wasm_cb(
     let vec_slice = unsafe { std::slice::from_raw_parts(vec_ptr as *const u8, vec_len as usize) };
     let vec = vec_slice.to_vec();
 
-    match MapWindowStage::new(stem, vec, ctx, 256, 256, blacklist.as_ref()) {
-        Ok(v) => {
+    match file_type {
+        FileType::Map => match MapWindowStage::new(stem, vec, ctx, 256, 256, blacklist.as_ref()) {
+            Ok(v) => {
+                unsafe {
+                    console_log(CString::new(format!("OK!")).unwrap().as_ptr());
+                };
+                map_vec.push(Rc::new(RefCell::new(v)));
+                unsafe {
+                    console_log(CString::new(format!("PUSHED!")).unwrap().as_ptr());
+                };
+            }
+            Err(v) => {
+                unsafe {
+                    console_log(CString::new(format!("Err: {:#?}", v)).unwrap().as_ptr());
+                };
+            }
+        },
+        FileType::Blacklist => {
             unsafe {
-                console_log(CString::new(format!("OK!")).unwrap().as_ptr());
+                console_log(
+                    CString::new(format!("blacklist file: {:#?}", stem))
+                        .unwrap()
+                        .as_ptr(),
+                );
             };
-            map_vec.push(Rc::new(RefCell::new(v)));
-            unsafe {
-                console_log(CString::new(format!("PUSHED!")).unwrap().as_ptr());
-            };
+            if let Ok(new_blacklist) = crate::blacklist::Blacklist::new(&vec) {
+                *blacklist = Some(new_blacklist);
+                unsafe {
+                    console_log(CString::new("Blacklist parse OK").unwrap().as_ptr());
+                };
+            }
         }
-        Err(v) => {
-            unsafe {
-                console_log(CString::new(format!("Err: {:#?}", v)).unwrap().as_ptr());
-            };
+        _ => {
+            unreachable!()
         }
     }
 }
