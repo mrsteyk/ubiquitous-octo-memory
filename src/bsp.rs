@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::blacklist::BlacklistReason;
+
 #[macro_export]
 macro_rules! lump_helper {
     ($value:expr, $pattern:pat => $extracted_value:expr) => {
@@ -62,6 +64,7 @@ pub struct PakFile {
     pub compression_algo: PakAlgo,
 
     pub remove: bool,
+    pub blacklisted: Option<BlacklistReason>,
 }
 
 impl PakFile {
@@ -287,6 +290,8 @@ impl ParsedMap {
                                                 compressed_size,
                                                 data_size,
                                             ),
+
+                                            blacklisted: None,
                                         })
                                     } else {
                                         return Err(Box::new(BSPError::InvalidPakFile(
@@ -323,6 +328,8 @@ impl ParsedMap {
 
                                         real_data: None,
                                         compression_algo: PakAlgo::None,
+
+                                        blacklisted: None,
                                     })
                                 }
                             }

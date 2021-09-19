@@ -1,7 +1,7 @@
 use sha2::Digest;
 use std::error::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum BlacklistReason {
     CSS,
     TF2,

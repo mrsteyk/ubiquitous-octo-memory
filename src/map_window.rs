@@ -84,6 +84,9 @@ pub struct MapWindowStage {
     pub current_entity: usize,
 
     pub open: bool,
+
+    pub blacklisted_texture: bool,
+    pub blacklisted_file: bool,
 }
 
 impl MapWindowStage {
@@ -95,11 +98,20 @@ impl MapWindowStage {
         height: u32,
         blacklist: Option<&Blacklist>,
     ) -> Result<Self, Box<dyn Error>> {
-        let parsed_map = crate::bsp::ParsedMap::new(buf)?;
+        let mut parsed_map = crate::bsp::ParsedMap::new(buf)?;
 
-        let pak = lump_helper!(&parsed_map.lumps[40], crate::bsp::BSPLump::PakFile(v) => v);
+        let pak = lump_helper!(&mut parsed_map.lumps[40], crate::bsp::BSPLump::PakFile(v) => v);
         let file =
             &parsed_map.buf[pak.base.offset as usize..(pak.base.offset + pak.base.size) as usize];
+
+        if let Some(blacklist) = blacklist {
+            for i in &mut pak.files {
+                if let Some(v) = blacklist.check(i.data(file)) {
+                    i.blacklisted = Some(v);
+                }
+            }
+        }
+
         let textures = pak
             .files
             .iter()
@@ -138,11 +150,8 @@ impl MapWindowStage {
                         name: name.to_string(),
                         to_remove: false,
 
-                        problem: if let Some(blacklist) = blacklist {
-                            match blacklist.check(file_data) {
-                                Some(reason) => Some(TextureProblem::Blacklist(reason)),
-                                _ => None,
-                            }
+                        problem: if let Some(reason) = &pakfile.blacklisted {
+                            Some(TextureProblem::Blacklist(reason.clone()))
                         } else {
                             None
                         },
@@ -188,13 +197,8 @@ impl MapWindowStage {
                                 name: name.to_string(),
                                 to_remove: false,
 
-                                problem: if let Some(blacklist) = blacklist {
-                                    match blacklist.check(file_data) {
-                                        Some(reason) => Some(TextureProblem::Blacklist(reason)),
-                                        _ => Some(TextureProblem::UnsupportedImageFormat(
-                                            image.format,
-                                        )),
-                                    }
+                                problem: if let Some(reason) = &pakfile.blacklisted {
+                                    Some(TextureProblem::Blacklist(reason.clone()))
                                 } else {
                                     Some(TextureProblem::UnsupportedImageFormat(image.format))
                                 },
@@ -222,6 +226,9 @@ impl MapWindowStage {
             current_entity: 0,
 
             open: true,
+
+            blacklisted_texture: false,
+            blacklisted_file: false,
         })
     }
 
@@ -270,11 +277,17 @@ impl MapWindowStage {
                 .scroll(true)
                 .default_width(712.0)
                 .show(egui_ctx, |ui| {
+                    ui.checkbox(&mut self.blacklisted_texture, "Show only blacklisted");
                     for texture in &mut self.textures {
                         // ui.add(egui::ImageButton::new(
                         //     egui::TextureId::User(texture.gl_internal_id() as u64),
                         //     [256.0; 2],
                         // ));
+                        if self.blacklisted_texture {
+                            if texture.problem.is_none() {
+                                continue;
+                            }
+                        }
                         ui.horizontal(|ui| {
                             let size = [
                                 texture.texture.width.max(128).min(256) as f32,
@@ -308,6 +321,7 @@ impl MapWindowStage {
                         });
                     }
                 });
+            let blacklisted_file_mut = &mut self.blacklisted_file;
             if let Some(parsed_map) = self.parsed_map.as_mut() {
                 egui::Window::new(format!("[{}] ZIP file view", self.name))
                     .resizable(true)
@@ -321,12 +335,26 @@ impl MapWindowStage {
                         if ui.button("Export ZIP").clicked() {
                             platform::save_picker_zip(pak); // TODO: error handling?
                         }
+                        ui.checkbox(blacklisted_file_mut, "Show only blacklisted");
                         // TODO: import somehow
                         ui.label("Tick to remove it from the PK lump");
 
                         for pakfile in &mut paklump.files {
+                            if *blacklisted_file_mut {
+                                if pakfile.blacklisted.is_none() {
+                                    continue;
+                                }
+                            }
                             let name = pakfile.name(pak);
-                            ui.checkbox(&mut pakfile.remove, name);
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut pakfile.remove, name);
+                                if let Some(v) = &pakfile.blacklisted {
+                                    ui.colored_label(
+                                        egui::color::Color32::RED,
+                                        format!(" {:?}", &v),
+                                    );
+                                }
+                            });
                         }
                     });
 
