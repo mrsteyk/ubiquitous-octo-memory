@@ -1,7 +1,6 @@
-use std::{borrow::Borrow, error::Error, ops::Add};
+use std::error::Error;
 
 use egui::CtxRef;
-// use image::ImageDecoder;
 use miniquad as mq;
 
 use crate::{
@@ -87,6 +86,10 @@ pub struct MapWindowStage {
 
     pub blacklisted_texture: bool,
     pub blacklisted_file: bool,
+
+    pub file_filter: String,
+    pub texture_filter: String,
+    pub entity_filter: String,
 }
 
 impl MapWindowStage {
@@ -179,11 +182,35 @@ impl MapWindowStage {
                                 name: name.to_string(),
                                 to_remove: false,
 
-                                problem: if let Some(blacklist) = blacklist {
-                                    match blacklist.check(file_data) {
-                                        Some(reason) => Some(TextureProblem::Blacklist(reason)),
-                                        _ => None,
-                                    }
+                                problem: if let Some(reason) = &pakfile.blacklisted {
+                                    Some(TextureProblem::Blacklist(reason.clone()))
+                                } else {
+                                    None
+                                },
+                            }
+                        }
+                        vtf::ImageFormat::Abgr8888 => {
+                            let mut image_data = image.get_frame(0).unwrap().to_vec();
+                            for idx in 0..image_data.len() / 4 {
+                                let i = idx * 4;
+                                if let [a, b, c, d] = image_data[i..i + 4] {
+                                    image_data[i..i + 4].copy_from_slice(&[d, c, b, a]);
+                                } else {
+                                    unreachable!()
+                                }
+                            }
+                            Texture {
+                                texture: mq::Texture::from_rgba8(
+                                    ctx,
+                                    image.width,
+                                    image.height,
+                                    &image_data,
+                                ),
+                                name: name.to_string(),
+                                to_remove: false,
+
+                                problem: if let Some(reason) = &pakfile.blacklisted {
+                                    Some(TextureProblem::Blacklist(reason.clone()))
                                 } else {
                                     None
                                 },
@@ -229,6 +256,10 @@ impl MapWindowStage {
 
             blacklisted_texture: false,
             blacklisted_file: false,
+
+            file_filter: "".to_string(),
+            texture_filter: "".to_string(),
+            entity_filter: "".to_string(),
         })
     }
 
@@ -278,6 +309,11 @@ impl MapWindowStage {
                 .default_width(712.0)
                 .show(egui_ctx, |ui| {
                     ui.checkbox(&mut self.blacklisted_texture, "Show only blacklisted");
+                    let filter = &mut self.texture_filter;
+                    ui.horizontal(|ui| {
+                        ui.label("Search");
+                        ui.text_edit_singleline(filter);
+                    });
                     for texture in &mut self.textures {
                         // ui.add(egui::ImageButton::new(
                         //     egui::TextureId::User(texture.gl_internal_id() as u64),
@@ -285,6 +321,11 @@ impl MapWindowStage {
                         // ));
                         if self.blacklisted_texture {
                             if texture.problem.is_none() {
+                                continue;
+                            }
+                        }
+                        if filter.len() > 0 {
+                            if texture.name.find(filter.as_str()).is_none() {
                                 continue;
                             }
                         }
@@ -322,6 +363,7 @@ impl MapWindowStage {
                     }
                 });
             let blacklisted_file_mut = &mut self.blacklisted_file;
+            let filter = &mut self.file_filter;
             if let Some(parsed_map) = self.parsed_map.as_mut() {
                 egui::Window::new(format!("[{}] ZIP file view", self.name))
                     .resizable(true)
@@ -336,6 +378,10 @@ impl MapWindowStage {
                             platform::save_picker_zip(pak); // TODO: error handling?
                         }
                         ui.checkbox(blacklisted_file_mut, "Show only blacklisted");
+                        ui.horizontal(|ui| {
+                            ui.label("Search");
+                            ui.text_edit_singleline(filter);
+                        });
                         // TODO: import somehow
                         ui.label("Tick to remove it from the PK lump");
 
@@ -346,6 +392,11 @@ impl MapWindowStage {
                                 }
                             }
                             let name = pakfile.name(pak);
+                            if filter.len() > 0 {
+                                if name.find(filter.as_str()).is_none() {
+                                    continue;
+                                }
+                            }
                             ui.horizontal(|ui| {
                                 ui.checkbox(&mut pakfile.remove, name);
                                 if let Some(v) = &pakfile.blacklisted {
@@ -362,6 +413,7 @@ impl MapWindowStage {
                     let entities = &mut self.entities;
                     let mutref = &mut self.current_entity;
                     let ents_len = entities.len();
+                    let filter = &mut self.entity_filter;
                     const VDF_EXT: [&str; 3] = ["txt", "kv", "vdf"];
                     const VDF_FLT: &str = "KeyValue";
                     egui::Window::new(format!("[{}] Entity view", self.name))
@@ -391,6 +443,10 @@ impl MapWindowStage {
                                 *mutref = 0;
                                 *entities = kv::parse_ents_hacky(lump_helper!(&parsed_map.lumps[0], BSPLump::Entities(v) => v).string.as_str());
                             }
+                            ui.horizontal(|ui| {
+                                ui.label("Search");
+                                ui.text_edit_singleline(filter);
+                            });
                             egui::ComboBox::from_label("Entity")
                                 .selected_text(format!("{}: {}{}", *mutref, entities[*mutref].pretty_name(), if entities[*mutref].dirty {
                                     " *"
@@ -400,6 +456,11 @@ impl MapWindowStage {
                                 .width(512.0)
                                 .show_ui(ui, |ui| {
                                     for i in 0..ents_len {
+                                        if filter.len() > 0 {
+                                            if entities[i].string.find(filter.as_str()).is_none() {
+                                                continue;
+                                            }
+                                        }
                                         ui.selectable_value(mutref, i, format!("{}: {}{}", i, entities[i].pretty_name(), if entities[i].dirty {
                                             " *"
                                         } else {
