@@ -380,6 +380,27 @@ impl MapWindowStage {
                         if ui.button("Export ZIP").clicked() {
                             platform::save_picker_zip(pak); // TODO: error handling?
                         }
+                        if ui.button("Export Used List").clicked() {
+                            let mut hesh = hashbrown::HashSet::new();
+                            for pakfile in &paklump.files {
+                                if let Some(blacklist) = &pakfile.blacklisted {
+                                    hesh.insert(match blacklist {
+                                        BlacklistReason::Game(a) => a,
+                                        BlacklistReason::Pack(a) => a,
+                                        BlacklistReason::Custom(a) => a,
+                                    });
+                                }
+                            }
+                            let k0k = {
+                                let mut brih = String::with_capacity(hesh.len()*50);
+                                for i in hesh {
+                                    brih.push_str(i.as_str());
+                                    brih.push('\n');
+                                }
+                                brih
+                            };
+                            platform::save_picker("txt", &["txt"], k0k.as_bytes());
+                        }
                         ui.checkbox(blacklisted_file_mut, "Show only blacklisted");
                         ui.horizontal(|ui| {
                             ui.label("Search");
