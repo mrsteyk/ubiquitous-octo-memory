@@ -345,16 +345,19 @@ impl MapWindowStage {
                                     texture.texture.width, texture.texture.height
                                 ));
                                 if let Some(problem) = &texture.problem {
+                                    // what the fuck did I do here
+                                    let (colour, text) = if let TextureProblem::Blacklist(BlacklistReason::Game(a)) = &problem {
+                                        (egui::color::Color32::RED, format!("Blacklisted game: {}", &a))
+                                    } else if let TextureProblem::Blacklist(BlacklistReason::Pack(a)) = &problem {
+                                        (egui::color::Color32::GREEN, format!("Pack: {}", &a))
+                                    } else if let TextureProblem::UnsupportedImageFormat(f) = &problem {
+                                        (egui::color::Color32::RED, format!("Unsupported image format: {:?}", f))
+                                    } else {
+                                        (egui::color::Color32::YELLOW, format!("{:?}", &problem))
+                                    };
                                     ui.colored_label(
-                                        egui::color::Color32::RED,
-                                        match problem {
-                                            TextureProblem::Blacklist(v) => {
-                                                format!("Blacklisted: {:?}", v)
-                                            }
-                                            TextureProblem::UnsupportedImageFormat(f) => {
-                                                format!("Unsupported image format: {:?}", f)
-                                            }
-                                        },
+                                        colour,
+                                        text,
                                     );
                                 }
                                 ui.checkbox(&mut texture.to_remove, "Remove");

@@ -3,9 +3,8 @@ use std::error::Error;
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum BlacklistReason {
-    CSS,
-    TF2,
-    CSGO,
+    Game(String),
+    Pack(String),
     Custom(String),
 }
 
@@ -31,11 +30,12 @@ impl Blacklist {
         for (name, hashes) in &self.hashes {
             for hash in hashes {
                 if file_hash.eq(&hash.to_lowercase()) {
-                    return Some(match name.to_lowercase().as_str() {
-                        "css" => BlacklistReason::CSS,
-                        "tf2" => BlacklistReason::TF2,
-                        "csgo" => BlacklistReason::CSGO,
-                        _ => BlacklistReason::Custom(name.clone()),
+                    return Some(if name.starts_with("game_") {
+                        BlacklistReason::Game(name[5..].to_owned())
+                    } else if name.starts_with("pack_") {
+                        BlacklistReason::Pack(name[5..].to_owned())
+                    } else {
+                        BlacklistReason::Custom(name.clone())
                     });
                 }
             }
