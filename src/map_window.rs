@@ -403,9 +403,17 @@ impl MapWindowStage {
                             ui.horizontal(|ui| {
                                 ui.checkbox(&mut pakfile.remove, name);
                                 if let Some(v) = &pakfile.blacklisted {
+                                    // what the fuck did I do here
+                                    let (colour, text) = if let BlacklistReason::Game(a) = &v {
+                                        (egui::color::Color32::RED, format!("Blacklisted game: {}", &a))
+                                    } else if let BlacklistReason::Pack(a) = &v {
+                                        (egui::color::Color32::GREEN, format!("Pack: {}", &a))
+                                    } else {
+                                        (egui::color::Color32::YELLOW, format!("{:?}", &v))
+                                    };
                                     ui.colored_label(
-                                        egui::color::Color32::RED,
-                                        format!(" {:?}", &v),
+                                        colour,
+                                        text,
                                     );
                                 }
                             });
