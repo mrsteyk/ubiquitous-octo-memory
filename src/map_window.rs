@@ -67,6 +67,7 @@ pub struct Texture {
     pub name: String,
 
     pub to_remove: bool,
+    pub size: u64,
 
     pub problem: Option<TextureProblem>,
 }
@@ -141,6 +142,8 @@ impl MapWindowStage {
                     name, image.format, image.width, image.height
                 );
 
+                let size = pakfile.data.1 as u64 + pakfile.name.1 as u64 + 30;
+
                 // This library is so bad: UnsupportedImageFormat(Rgba16161616f)
                 if let Ok(decoded) = image.decode(0) {
                     Texture {
@@ -158,6 +161,8 @@ impl MapWindowStage {
                         } else {
                             None
                         },
+
+                        size,
                     }
                 } else {
                     match image.format {
@@ -187,6 +192,8 @@ impl MapWindowStage {
                                 } else {
                                     None
                                 },
+
+                                size,
                             }
                         }
                         vtf::ImageFormat::Abgr8888 => {
@@ -214,6 +221,8 @@ impl MapWindowStage {
                                 } else {
                                     None
                                 },
+
+                                size,
                             }
                         }
                         _ => {
@@ -229,6 +238,8 @@ impl MapWindowStage {
                                 } else {
                                     Some(TextureProblem::UnsupportedImageFormat(image.format))
                                 },
+
+                                size,
                             }
                         }
                     }
@@ -314,6 +325,24 @@ impl MapWindowStage {
                         ui.label("Search");
                         ui.text_edit_singleline(filter);
                     });
+                    let textures = &self.textures;
+                    ui.horizontal(|ui| {
+                        ui.label("Saved size: ~");
+                        ui.label(bytesize::to_string(
+                            textures
+                                .iter()
+                                .filter_map(|f| {
+                                    if f.to_remove {
+                                        Some(f.size)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .reduce(|a, b| a + b)
+                                .unwrap_or(0u64),
+                            false,
+                        ))
+                    });
                     for texture in &mut self.textures {
                         // ui.add(egui::ImageButton::new(
                         //     egui::TextureId::User(texture.gl_internal_id() as u64),
@@ -341,24 +370,36 @@ impl MapWindowStage {
                             ui.vertical(|ui| {
                                 ui.label(&texture.name);
                                 ui.label(format!(
-                                    "{}x{}",
-                                    texture.texture.width, texture.texture.height
+                                    "{}x{} | {}",
+                                    texture.texture.width, texture.texture.height,
+                                    bytesize::to_string(texture.size, false)
                                 ));
                                 if let Some(problem) = &texture.problem {
                                     // what the fuck did I do here
-                                    let (colour, text) = if let TextureProblem::Blacklist(BlacklistReason::Game(a)) = &problem {
-                                        (egui::color::Color32::RED, format!("Blacklisted game: {}", &a))
-                                    } else if let TextureProblem::Blacklist(BlacklistReason::Pack(a)) = &problem {
+                                    let (colour, text) = if let TextureProblem::Blacklist(
+                                        BlacklistReason::Game(a),
+                                    ) = &problem
+                                    {
+                                        (
+                                            egui::color::Color32::RED,
+                                            format!("Blacklisted game: {}", &a),
+                                        )
+                                    } else if let TextureProblem::Blacklist(
+                                        BlacklistReason::Pack(a),
+                                    ) = &problem
+                                    {
                                         (egui::color::Color32::GREEN, format!("Pack: {}", &a))
-                                    } else if let TextureProblem::UnsupportedImageFormat(f) = &problem {
-                                        (egui::color::Color32::RED, format!("Unsupported image format: {:?}", f))
+                                    } else if let TextureProblem::UnsupportedImageFormat(f) =
+                                        &problem
+                                    {
+                                        (
+                                            egui::color::Color32::RED,
+                                            format!("Unsupported image format: {:?}", f),
+                                        )
                                     } else {
                                         (egui::color::Color32::YELLOW, format!("{:?}", &problem))
                                     };
-                                    ui.colored_label(
-                                        colour,
-                                        text,
-                                    );
+                                    ui.colored_label(colour, text);
                                 }
                                 ui.checkbox(&mut texture.to_remove, "Remove");
                             });
@@ -392,7 +433,7 @@ impl MapWindowStage {
                                 }
                             }
                             let k0k = {
-                                let mut brih = String::with_capacity(hesh.len()*50);
+                                let mut brih = String::with_capacity(hesh.len() * 50);
                                 for i in hesh {
                                     brih.push_str(i.as_str());
                                     brih.push('\n');
@@ -405,6 +446,24 @@ impl MapWindowStage {
                         ui.horizontal(|ui| {
                             ui.label("Search");
                             ui.text_edit_singleline(filter);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Saved size: ~");
+                            ui.label(bytesize::to_string(
+                                paklump
+                                    .files
+                                    .iter()
+                                    .filter_map(|f| {
+                                        if f.remove {
+                                            Some(f.data.1 as u64 + f.name.1 as u64 + 30)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .reduce(|a, b| a + b)
+                                    .unwrap_or(0u64),
+                                false,
+                            ))
                         });
                         // TODO: import somehow
                         ui.label("Tick to remove it from the PK lump");
@@ -423,19 +482,21 @@ impl MapWindowStage {
                             }
                             ui.horizontal(|ui| {
                                 ui.checkbox(&mut pakfile.remove, name);
+                                let size = pakfile.data.1 as u64 + pakfile.name.1 as u64 + 30;
+                                ui.label(bytesize::to_string(size, false));
                                 if let Some(v) = &pakfile.blacklisted {
                                     // what the fuck did I do here
                                     let (colour, text) = if let BlacklistReason::Game(a) = &v {
-                                        (egui::color::Color32::RED, format!("Blacklisted game: {}", &a))
+                                        (
+                                            egui::color::Color32::RED,
+                                            format!("Blacklisted game: {}", &a),
+                                        )
                                     } else if let BlacklistReason::Pack(a) = &v {
                                         (egui::color::Color32::GREEN, format!("Pack: {}", &a))
                                     } else {
                                         (egui::color::Color32::YELLOW, format!("{:?}", &v))
                                     };
-                                    ui.colored_label(
-                                        colour,
-                                        text,
-                                    );
+                                    ui.colored_label(colour, text);
                                 }
                             });
                         }
