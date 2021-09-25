@@ -91,6 +91,8 @@ pub struct MapWindowStage {
     pub file_filter: String,
     pub texture_filter: String,
     pub entity_filter: String,
+
+    pub new_view: bool, // everything in one list
 }
 
 impl MapWindowStage {
@@ -271,6 +273,8 @@ impl MapWindowStage {
             file_filter: "".to_string(),
             texture_filter: "".to_string(),
             entity_filter: "".to_string(),
+
+            new_view: false,
         })
     }
 
@@ -507,6 +511,7 @@ impl MapWindowStage {
                     let mutref = &mut self.current_entity;
                     let ents_len = entities.len();
                     let filter = &mut self.entity_filter;
+                    let new_view = &mut self.new_view;
                     const VDF_EXT: [&str; 3] = ["txt", "kv", "vdf"];
                     const VDF_FLT: &str = "KeyValue";
                     egui::Window::new(format!("[{}] Entity view", self.name))
@@ -536,35 +541,50 @@ impl MapWindowStage {
                                 *mutref = 0;
                                 *entities = kv::parse_ents_hacky(lump_helper!(&parsed_map.lumps[0], BSPLump::Entities(v) => v).string.as_str());
                             }
+                            ui.checkbox(new_view, "All in one view");
                             ui.horizontal(|ui| {
                                 ui.label("Search");
                                 ui.text_edit_singleline(filter);
                             });
-                            egui::ComboBox::from_label("Entity")
-                                .selected_text(format!("{}: {}{}", *mutref, entities[*mutref].pretty_name(), if entities[*mutref].dirty {
-                                    " *"
-                                } else {
-                                    ""
-                                }))
-                                .width(512.0)
-                                .show_ui(ui, |ui| {
-                                    for i in 0..ents_len {
-                                        if filter.len() > 0 {
-                                            if entities[i].string.find(filter.as_str()).is_none() {
-                                                continue;
+                            if !(*new_view) {
+                                egui::ComboBox::from_label("Entity")
+                                    .selected_text(format!("{}: {}{}", *mutref, entities[*mutref].pretty_name(), if entities[*mutref].dirty {
+                                        " *"
+                                    } else {
+                                        ""
+                                    }))
+                                    .width(512.0)
+                                    .show_ui(ui, |ui| {
+                                        for i in 0..ents_len {
+                                            if filter.len() > 0 {
+                                                if entities[i].string.find(filter.as_str()).is_none() {
+                                                    continue;
+                                                }
                                             }
+                                            ui.selectable_value(mutref, i, format!("{}: {}{}", i, entities[i].pretty_name(), if entities[i].dirty {
+                                                " *"
+                                            } else {
+                                                ""
+                                            }));
                                         }
-                                        ui.selectable_value(mutref, i, format!("{}: {}{}", i, entities[i].pretty_name(), if entities[i].dirty {
-                                            " *"
-                                        } else {
-                                            ""
-                                        }));
+                                    }
+                                );
+
+                                if ui.code_editor(&mut entities[*mutref].string).changed() {
+                                    entities[*mutref].dirty = true;
+                                }
+                            } else {
+                                for ent in entities {
+                                    if filter.len() > 0 {
+                                        if ent.string.find(filter.as_str()).is_none() {
+                                            continue;
+                                        }
+                                    }
+
+                                    if ui.code_editor(&mut ent.string).changed() {
+                                        ent.dirty = true;
                                     }
                                 }
-                            );
-
-                            if ui.code_editor(&mut entities[*mutref].string).changed() {
-                                entities[*mutref].dirty = true;
                             }
                         });
                 }
